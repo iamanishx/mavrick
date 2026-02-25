@@ -1,20 +1,23 @@
-import { Server, Probot } from "probot";
-import app from "./index";
+import { Chat } from "chat";
+import { createDiscordAdapterConfig } from "./adapters/discord";
+import { createMemoryState } from "@chat-adapter/state-memory";
+import "./index";
 
-async function main() {
-  const server = new Server({
-    Probot: Probot.defaults({
-      appId: process.env.APP_ID,
-      privateKey: process.env.PRIVATE_KEY,
-      secret: process.env.WEBHOOK_SECRET,
-    }),
-  });
+const bot = new Chat({
+  userName: "axeai",
+  adapters: {
+    discord: createDiscordAdapterConfig(),
+  },
+  state: createMemoryState(),
+});
 
-  await server.load(app);
-  
-  const port = process.env.PORT || 3000;
-  await server.start();
-  console.log(`Server running on port ${port}`);
-}
+bot.onNewMention(async (thread, message) => {
+  thread.subscribe();
+  await thread.post("I've received your request and will start processing it shortly. I'll analyze the repository and generate the appropriate tests.");
+});
 
-main().catch(console.error);
+bot.onSubscribedMessage(async (thread, message) => {
+  await thread.post("Thanks for your follow-up message! I'm still processing your initial request.");
+});
+
+export const discordWebhooks = bot.webhooks.discord;

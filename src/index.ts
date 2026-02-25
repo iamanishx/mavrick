@@ -1,5 +1,6 @@
-import { Context, Probot } from "probot";
 import { Queue } from "bullmq";
+import { repoDb } from "./tools/db";
+import type { Thread } from "chat";
 
 const testQueue = new Queue("test-generation", {
   connection: {
@@ -8,43 +9,77 @@ const testQueue = new Queue("test-generation", {
   },
 });
 
-/**
- * Probot application entry point.
- * Listens for issue comments and queues test generation jobs for the worker.
- * 
- * @param app - The Probot application instance.
- */
-export default (app: Probot) => {
-  app.on("issue_comment.created", async (context: Context<"issue_comment">) => {
-    const commentBody = context.payload.comment.body;
-    const isPr = !!context.payload.issue.pull_request;
-    
-    if (!isPr || !commentBody.includes("@axeai-bot")) return;
+interface ParsedTask {
+  repoUrl: string;
+  owner: string;
+  repo: string;
+  taskType: string;
+  taskInput: string;
+}
 
-    const { owner, repo } = context.repo();
-    const prNumber = context.payload.issue.number;
-    const installationId = context.payload.installation?.id;
+function parseMessage(text: string): ParsedTask | null {
+  const githubUrlMatch = text.match(/https?:\/\/github\.com\/([^\/\s]+)\/([^\/\s]+)/);
+  if (!githubUrlMatch) return null;
 
-    if (!installationId) {
-        app.log.error("No installation ID found");
-        return;
-    }
+  const owner = githubUrlMatch[1];
+  const repo = githubUrlMatch[2].replace(/\.git$/, "");
+  const repoUrl = `https://github.com/${owner}/${repo}`;
 
-    const { data: pr } = await (context.octokit as any).pulls.get({ owner, repo, pull_number: prNumber });
+  let taskType = "generate-tests";
+  let taskInput = text;
 
-    await testQueue.add("generate-tests", {
-      owner,
-      repo,
-      prNumber,
-      installationId,
-      branch: pr.head.ref, 
-      headRef: pr.head.ref, 
-      repoUrl: pr.head.repo.clone_url,
-    });
+  const lowerText = text.toLowerCase();
+  if (lowerText.includes("review")) {
+    taskType = "review-code";
+  } else if (lowerText.includes("test")) {
+    taskType = "generate-tests";
+  } else if (lowerText.includes("fix") || lowerText.includes("bug")) {
+    taskType = "fix-bugs";
+  }
 
-    await (context.octokit as any).issues.createComment(context.issue({
-      body: "Request queued. A worker will process this shortly using a secure Docker sandbox."
-    }));
+  return { repoUrl, owner, repo, taskType, taskInput };
+}
+
+function getInstallationId(guildId: string): number {
+  const envKey = `GITHUB_INSTALLATION_ID_${guildId}`;
+  const installationId = process.env[envKey];
+  if (!installationId) {
+    return parseInt(process.env.DEFAULT_GITHUB_INSTALLATION_ID || "0", 10);
+  }
+  return parseInt(installationId, 10);
+}
+
+export async function handleNewTask(thread: Thread, messageText: string): Promise<void> {
+  const threadId = thread.channelId;
+  const guildId = (thread as any).raw?.guild_id || "";
+
+  const parsed = parseMessage(messageText);
+  if (!parsed) {
+    await thread.post("Please provide a valid GitHub repository URL.");
+    return;
+  }
+
+  const { owner, repo, taskType, taskInput, repoUrl } = parsed;
+
+  const installationId = getInstallationId(guildId);
+  if (!installationId) {
+    await thread.post("No GitHub App installation found for this server. Please configure GITHUB_INSTALLATION_ID_<GUILD_ID> environment variable.");
+    return;
+  }
+
+  const dbRepo = repoDb.getOrCreateRepo(owner, repo, installationId);
+  const session = repoDb.createSession(dbRepo.id, taskType, taskInput, threadId);
+
+  await testQueue.add("process-task", {
+    owner,
+    repo,
+    taskInput,
+    taskType,
+    threadId,
+    installationId,
+    sessionId: session.id,
+    repoUrl,
   });
-};
 
+  await thread.post(`Queued: ${taskType} for ${owner}/${repo} (Session: ${session.id})`);
+}
