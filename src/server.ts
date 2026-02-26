@@ -1,7 +1,7 @@
 import { Chat } from "chat";
 import { createDiscordAdapterConfig } from "./adapters/discord";
 import { createMemoryState } from "@chat-adapter/state-memory";
-import "./index";
+import { handleNewTask } from "./index";
 
 const bot = new Chat({
   userName: "axeai",
@@ -12,12 +12,12 @@ const bot = new Chat({
 });
 
 bot.onNewMention(async (thread, message) => {
-  thread.subscribe();
-  await thread.post("I've received your request and will start processing it shortly. I'll analyze the repository and generate the appropriate tests.");
+  await thread.subscribe();
+  await handleNewTask(thread, message.text);
 });
 
 bot.onSubscribedMessage(async (thread, message) => {
-  await thread.post("Thanks for your follow-up message! I'm still processing your initial request.");
+  await handleNewTask(thread, message.text);
 });
 
 export const discordWebhooks = bot.webhooks.discord;

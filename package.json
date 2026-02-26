@@ -4,9 +4,9 @@
   "description": "",
   "main": "src/index.ts",
   "scripts": {
-    "start": "bun run src/server.ts",
+    "start": "bun run src/http-server.ts",
     "worker": "bun run src/worker.ts",
-    "dev": "bun run --watch src/server.ts",
+    "dev": "bun run --watch src/http-server.ts",
     "dev:worker": "bun run --watch src/worker.ts",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
@@ -28,8 +28,6 @@
     "dockerode": "^4.0.9",
     "dotenv": "^17.2.3",
     "ioredis": "^5.9.1",
-    "probot": "^14.2.4",
-    "ralph-loop-agent": "^0.0.3",
     "tar-stream": "^3.1.7",
     "zod": "^4.3.5"
   },

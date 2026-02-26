@@ -56,26 +56,35 @@ export class DockerSandbox {
     });
 
     this.containerId = this.container.id;
-    await this.container.start();
 
-    await this.exec("apt-get update && apt-get install -y git python3 npm");
+    try {
+      await this.container.start();
 
-    const cleanRepoUrl = repoUrl.replace(/^https?:\/\//, "");
-    const authUrl = `https://x-access-token:${token}@${cleanRepoUrl}`;
+      await this.exec("apt-get update && apt-get install -y git python3 npm");
 
-    await this.exec("mkdir -p " + this.workingDir);
+      const cleanRepoUrl = repoUrl.replace(/^https?:\/\//, "");
+      const authUrl = `https://x-access-token:${token}@${cleanRepoUrl}`;
 
-    const cloneCmd = `cd ${this.workingDir} && git clone --depth 1 --branch ${branch} ${authUrl} .`;
-    const cloneResult = await this.exec(cloneCmd);
+      await this.exec("mkdir -p " + this.workingDir);
 
-    if (cloneResult.exitCode !== 0) {
-      throw new Error(`Failed to clone: ${cloneResult.stderr}`);
+      const cloneCmd = `cd ${this.workingDir} && git clone --depth 1 --branch ${branch} ${authUrl} .`;
+      const cloneResult = await this.exec(cloneCmd);
+
+      if (cloneResult.exitCode !== 0) {
+        throw new Error(`Failed to clone: ${cloneResult.stderr}`);
+      }
+
+      await this.exec('cd ' + this.workingDir + ' && git config user.email "bot@axeai.com"');
+      await this.exec('cd ' + this.workingDir + ' && git config user.name "AxeAI Bot"');
+
+      await this.setupMCP();
+    } catch (error) {
+      try {
+        await this.destroy();
+      } catch {
+      }
+      throw error;
     }
-
-    await this.exec('cd ' + this.workingDir + ' && git config user.email "bot@axeai.com"');
-    await this.exec('cd ' + this.workingDir + ' && git config user.name "AxeAI Bot"');
-
-    await this.setupMCP();
   }
 
   private async setupMCP(): Promise<void> {
@@ -161,16 +170,50 @@ export class DockerSandbox {
     if (!this.tools) throw new Error("MCP not initialized");
     const fullPath = path.startsWith("/") ? path : `${this.workingDir}/${path}`;
     const result = await this.tools.list_directory.execute({ path: fullPath });
-    return result?.directories?.map((d: string) => ({ name: d, type: "directory" as const })) || [];
+    
+    const directories = result?.directories?.map((d: string): FileEntry => ({
+      name: d,
+      type: "directory",
+    })) ?? [];
+    
+    const files = result?.files?.map((f: string): FileEntry => ({
+      name: f,
+      type: "file",
+    })) ?? [];
+    
+    return [...directories, ...files];
   }
 
   async bash(command: string): Promise<ExecResult> {
     if (!this.tools) throw new Error("MCP not initialized");
-    const result = await this.tools.bash.execute({ command });
+    const rawResult: any = await this.tools.bash.execute({ command });
+    
+    const first = Array.isArray(rawResult) ? rawResult[0] : rawResult;
+    
+    let stdout = "";
+    let stderr = "";
+    let exitCode = 0;
+    
+    if (first && typeof first === "object") {
+      if (typeof first.stdout === "string") {
+        stdout = first.stdout;
+      }
+      if (typeof first.stderr === "string") {
+        stderr = first.stderr;
+      }
+      if (typeof first.exitCode === "number") {
+        exitCode = first.exitCode;
+      }
+    }
+    
+    if (!stdout && first && Array.isArray(first.content) && first.content[0]?.text) {
+      stdout = first.content[0].text;
+    }
+    
     return {
-      stdout: result[0]?.content?.[0]?.text || "",
-      stderr: "",
-      exitCode: 0,
+      stdout,
+      stderr,
+      exitCode,
     };
   }
 
@@ -198,5 +241,9 @@ export class DockerSandbox {
 
   getTools() {
     return this.tools;
+  }
+
+  getWorkingDir(): string {
+    return this.workingDir;
   }
 }
