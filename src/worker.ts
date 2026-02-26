@@ -1,26 +1,49 @@
 import { Worker, Job } from "bullmq";
 import { runOrchestratorAgent } from "./agents/orchestrator";
 import { repoDb } from "./tools/db";
-import { Probot } from "probot";
-
-let probot: Probot | null = null;
-
-function getProbot(): Probot {
-  if (!probot) {
-    probot = new Probot({
-      appId: process.env.GITHUB_APP_ID || process.env.APP_ID,
-      privateKey: process.env.GITHUB_PRIVATE_KEY?.replace(/\\n/g, "\n") || process.env.PRIVATE_KEY,
-      secret: process.env.WEBHOOK_SECRET,
-    });
-  }
-  return probot;
-}
 
 async function getInstallationToken(installationId: number): Promise<string> {
-  const probotInstance = getProbot();
-  const octokit = await probotInstance.auth(installationId);
-  const { token } = await octokit.auth({ type: "installation", installationId }) as { token: string };
-  return token;
+  const appId = process.env.GITHUB_APP_ID;
+  const privateKey = process.env.GITHUB_PRIVATE_KEY?.replace(/\\n/g, "\n") || process.env.PRIVATE_KEY?.replace(/\\n/g, "\n");
+  
+  if (!appId || !privateKey) {
+    throw new Error("GITHUB_APP_ID and GITHUB_PRIVATE_KEY are required");
+  }
+
+  const jwt = await createJWToken(appId, privateKey);
+  
+  const response = await fetch(`https://api.github.com/app/installations/${installationId}/access_tokens`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${jwt}`,
+      Accept: "application/vnd.github+json",
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to get installation token: ${response.statusText}`);
+  }
+
+  const data = await response.json();
+  return data.token;
+}
+
+async function createJWToken(appId: string, privateKey: string): Promise<string> {
+  const [header, payload] = [
+    Buffer.from(JSON.stringify({ alg: "RS256", typ: "JWT" })).toString("base64url"),
+    Buffer.from(JSON.stringify({
+      iat: Math.floor(Date.now() / 1000),
+      exp: Math.floor(Date.now() / 1000) + 600,
+      iss: parseInt(appId, 10),
+    })).toString("base64url"),
+  ];
+
+  const crypto = await import("crypto");
+  const sign = crypto.createSign("RSA-SHA256");
+  sign.update(`${header}.${payload}`);
+  const signature = sign.sign(privateKey, "base64url");
+
+  return `${header}.${payload}.${signature}`;
 }
 
 const worker = new Worker(
@@ -32,7 +55,12 @@ const worker = new Worker(
       throw new Error("installationId is required");
     }
 
-    const token = await getInstallationToken(installationId);
+    let token: string;
+    if (process.env.GITHUB_TOKEN) {
+      token = process.env.GITHUB_TOKEN;
+    } else {
+      token = await getInstallationToken(installationId);
+    }
 
     const repoConfig = repoDb.getOrCreateRepo(owner, repo, installationId);
     
