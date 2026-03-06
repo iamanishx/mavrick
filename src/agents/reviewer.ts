@@ -1,7 +1,7 @@
 import { anthropic } from "@ai-sdk/anthropic";
-import { ToolLoopAgent, stepCountIs, tool, zodSchema } from "ai";
+import { ToolLoopAgent, stepCountIs, tool } from "ai";
 import { z } from "zod";
-import { DockerSandbox } from "../tools/sandbox";
+import { ContainedSandbox } from "contained-sandbox";
 
 const claudeModel = anthropic("claude-sonnet-4-5-20250514");
 
@@ -23,9 +23,9 @@ export interface ReviewResult {
 }
 
 export class ReviewerAgent {
-  private sandbox: DockerSandbox;
+  private sandbox: ContainedSandbox;
 
-  constructor(sandbox: DockerSandbox) {
+  constructor(sandbox: ContainedSandbox) {
     this.sandbox = sandbox;
   }
 
@@ -52,39 +52,32 @@ Provide a comprehensive review with:
       tools: {
         readFile: tool({
           description: "Read the complete contents of a generated test file to review its quality",
-          inputSchema: zodSchema(
-            z.object({
-              path: z.string(),
-            })
-          ),
-          execute: async (args: { path: string }) => {
-            const fullPath = args.path.startsWith("/")
-              ? args.path
-              : `${this.sandbox["workingDir"]}/${args.path}`;
-            const content = await this.sandbox.readFile(fullPath);
+          inputSchema: z.object({
+            path: z.string(),
+          }),
+          execute: async ({ path }) => {
+            const content = await this.sandbox.readFile(path);
             return { success: true, content };
           },
         }),
         analyzeTestCoverage: tool({
           description: "Analyze what the generated tests cover - functionality, edge cases, error handling",
-          inputSchema: zodSchema(
-            z.object({
-              testFile: z.string(),
-              sourceFile: z.string().optional(),
-            })
-          ),
-          execute: async (args: { testFile: string; sourceFile?: string }) => {
-            const testContent = await this.sandbox.readFile(args.testFile);
+          inputSchema: z.object({
+            testFile: z.string(),
+            sourceFile: z.string().optional(),
+          }),
+          execute: async ({ testFile, sourceFile }) => {
+            const testContent = await this.sandbox.readFile(testFile);
             const hasAssertions = testContent.includes("expect") || testContent.includes("assert");
             const hasErrorHandling = testContent.includes("catch") || testContent.includes("throw");
             const hasEdgeCases = testContent.includes("null") || testContent.includes("undefined") || testContent.includes("empty");
             const hasAsyncTests = testContent.includes("async") || testContent.includes("await");
             const testCount = (testContent.match(/it\(|test\(|describe\(/g) || []).length;
-            
+
             let sourceContent = "";
-            if (args.sourceFile) {
+            if (sourceFile) {
               try {
-                sourceContent = await this.sandbox.readFile(args.sourceFile);
+                sourceContent = await this.sandbox.readFile(sourceFile);
               } catch {}
             }
 
@@ -106,13 +99,11 @@ Provide a comprehensive review with:
         }),
         runTests: tool({
           description: "Run the generated tests to verify they pass",
-          inputSchema: zodSchema(
-            z.object({
-              command: z.string().optional(),
-            })
-          ),
-          execute: async (args: { command?: string }) => {
-            const testCmd = args.command || `npm test`;
+          inputSchema: z.object({
+            command: z.string().optional(),
+          }),
+          execute: async ({ command }) => {
+            const testCmd = command || `npm test`;
             const result = await this.sandbox.exec(testCmd);
             return {
               passed: result.exitCode === 0,
@@ -122,7 +113,7 @@ Provide a comprehensive review with:
             };
           },
         }),
-      } as any,
+      },
     });
 
     const testFilesList = options.testFiles.join(", ");
@@ -149,7 +140,7 @@ Read each test file, analyze its coverage, and run the tests to verify they pass
     const testRun = toolResults?.find((r) => r.toolName === "runTests");
     const hasPassIndicator = testRun?.result?.passed ?? (output.text?.toLowerCase().includes("pass") && !output.text?.toLowerCase().includes("fail"));
     const hasFailIndicator = output.text?.toLowerCase().includes("fail");
-    
+
     const testResults: ReviewResult["testResults"] = options.testFiles.map((file) => ({
       file,
       passed: hasPassIndicator && !hasFailIndicator,

@@ -17,6 +17,16 @@ interface ParsedTask {
   taskInput: string;
 }
 
+interface RunContext {
+  rootRunId?: string;
+  runId?: string;
+}
+
+function createId(prefix: string): string {
+  const rand = Math.random().toString(36).slice(2, 10);
+  return `${prefix}_${Date.now()}_${rand}`;
+}
+
 function parseMessage(text: string): ParsedTask | null {
   const githubUrlMatch = text.match(/https?:\/\/github\.com\/([^\/\s]+)\/([^\/\s]+)/);
   if (!githubUrlMatch) return null;
@@ -49,7 +59,7 @@ function getInstallationId(guildId: string): number {
   return parseInt(installationId, 10);
 }
 
-export async function handleNewTask(thread: Thread, messageText: string): Promise<void> {
+export async function handleNewTask(thread: Thread, messageText: string, runContext?: RunContext): Promise<void> {
   const threadId = thread.channelId;
   const guildId = (thread as any).raw?.guild_id || "";
 
@@ -70,6 +80,64 @@ export async function handleNewTask(thread: Thread, messageText: string): Promis
   const dbRepo = repoDb.getOrCreateRepo(owner, repo, installationId);
   const session = repoDb.createSession(dbRepo.id, taskType, taskInput, threadId);
 
+  const now = new Date().toISOString();
+  let run = runContext?.runId ? repoDb.getRun(runContext.runId) : undefined;
+
+  if (!run && runContext?.runId) {
+    try {
+      run = repoDb.createChildRun(runContext.runId, {
+        id: createId("run"),
+        status: "pending",
+        source: "discord",
+        sourceRef: threadId,
+        taskInput,
+        startedAt: now,
+      });
+    } catch {
+      run = undefined;
+    }
+  }
+
+  if (!run) {
+    run = repoDb.createRun({
+      id: createId("run"),
+      repoId: dbRepo.id,
+      parentRunId: null,
+      rootRunId: runContext?.rootRunId,
+      status: "pending",
+      source: "discord",
+      sourceRef: threadId,
+      taskInput,
+      startedAt: now,
+    });
+  }
+
+  repoDb.bindChannel({
+    id: createId("bind"),
+    runId: run.id,
+    platform: "discord",
+    channelId: thread.channelId,
+    threadId,
+    externalRef: guildId || threadId,
+  });
+
+  repoDb.appendEvent({
+    id: createId("evt"),
+    runId: run.id,
+    eventType: "discord.message.received",
+    source: "discord",
+    sourceRef: threadId,
+    tsUtc: now,
+    payload: JSON.stringify({
+      taskType,
+      taskInput,
+      owner,
+      repo,
+      threadId,
+      sessionId: session.id,
+    }),
+  });
+
   await testQueue.add("process-task", {
     owner,
     repo,
@@ -79,7 +147,9 @@ export async function handleNewTask(thread: Thread, messageText: string): Promis
     installationId,
     sessionId: session.id,
     repoUrl,
+    rootRunId: run.root_run_id,
+    runId: run.id,
   });
 
-  await thread.post(`Queued: ${taskType} for ${owner}/${repo} (Session: ${session.id})`);
+  await thread.post(`Queued: ${taskType} for ${owner}/${repo} (Session: ${session.id}, Run: ${run.id})`);
 }

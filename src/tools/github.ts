@@ -87,7 +87,7 @@ export const createBranch = (branchName: string) => {
 
 export const commit = (files: string[], message: string) => {
   const addFiles = files.length > 0 ? files.join(" ") : ".";
-  return `git add ${addFiles} && git commit -m "${message.replace(/"/g, '\\"')}"`;
+  return `git add ${addFiles} && git commit -F - << 'COMMIT_MSG'\n${message}\nCOMMIT_MSG`;
 };
 
 export const push = (remote: string = "origin", branch: string) => {

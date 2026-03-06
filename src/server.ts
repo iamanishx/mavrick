@@ -13,11 +13,17 @@ const bot = new Chat({
 
 bot.onNewMention(async (thread, message) => {
   await thread.subscribe();
-  await handleNewTask(thread, message.text);
+  await handleNewTask(thread, message.text, {
+    rootRunId: (message as any).rootRunId ?? (message as any).raw?.rootRunId,
+    runId: (message as any).runId ?? (message as any).raw?.runId,
+  });
 });
 
 bot.onSubscribedMessage(async (thread, message) => {
-  await handleNewTask(thread, message.text);
+  await handleNewTask(thread, message.text, {
+    rootRunId: (message as any).rootRunId ?? (message as any).raw?.rootRunId,
+    runId: (message as any).runId ?? (message as any).raw?.runId,
+  });
 });
 
 export const discordWebhooks = bot.webhooks.discord;

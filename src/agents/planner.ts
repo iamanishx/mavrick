@@ -1,7 +1,7 @@
 import { openai } from "@ai-sdk/openai";
-import { ToolLoopAgent, stepCountIs, tool, jsonSchema } from "ai";
+import { ToolLoopAgent, stepCountIs, tool } from "ai";
 import { z } from "zod";
-import { DockerSandbox } from "../tools/sandbox";
+import { ContainedSandbox } from "contained-sandbox";
 
 export interface PlannerInput {
   repoUrl: string;
@@ -11,6 +11,8 @@ export interface PlannerInput {
   token: string;
   base: string;
   head: string;
+  containedBinaryPath?: string;
+  rootfsPath?: string;
 }
 
 export interface TestPlan {
@@ -51,7 +53,10 @@ async function fetchDiff(owner: string, repo: string, base: string, head: string
 }
 
 export async function runPlannerAgent(input: PlannerInput): Promise<TestPlan> {
-  const sandbox = new DockerSandbox();
+  const sandbox = new ContainedSandbox({
+    ...(input.containedBinaryPath ? { binaryPath: input.containedBinaryPath } : {}),
+    ...(input.rootfsPath ? { rootfsPath: input.rootfsPath } : {}),
+  });
 
   try {
     await sandbox.init(input.repoUrl, input.token, input.branch);
@@ -72,10 +77,10 @@ Process:
       tools: {
         readFile: tool({
           description: "Read the complete contents of a file from the repository",
-          inputSchema: jsonSchema(z.object({
+          inputSchema: z.object({
             path: z.string(),
-          })),
-          execute: async ({ path }: { path: string }) => {
+          }),
+          execute: async ({ path }) => {
             const content = await sandbox.readFile(path);
             return { content };
           },
@@ -83,10 +88,10 @@ Process:
 
         listDirectory: tool({
           description: "List directory contents to understand project structure",
-          inputSchema: jsonSchema(z.object({
+          inputSchema: z.object({
             path: z.string(),
-          })),
-          execute: async ({ path }: { path: string }) => {
+          }),
+          execute: async ({ path }) => {
             const entries = await sandbox.listDirectory(path);
             return { entries };
           },
@@ -94,28 +99,26 @@ Process:
 
         searchCode: tool({
           description: "Search for patterns in code files",
-          inputSchema: jsonSchema(z.object({
+          inputSchema: z.object({
             pattern: z.string(),
             path: z.string().optional(),
-          })),
-          execute: async ({ pattern, path = "." }: { pattern: string; path?: string }) => {
-            const result = await sandbox.exec(
-              `find ${path} -type f \\( -name "*.ts" -o -name "*.js" -o -name "*.tsx" -o -name "*.jsx" \\) | head -50 | xargs grep -l "${pattern}" 2>/dev/null || echo "no matches"`
-            );
-            return { files: result.stdout.split("\n").filter(Boolean) };
+          }),
+          execute: async ({ pattern, path = "." }) => {
+            const files = await sandbox.searchFiles(path, pattern);
+            return { files };
           },
         }),
 
         gitDiff: tool({
           description: "Get the diff/changes from a pull request to understand what needs testing",
-          inputSchema: jsonSchema(z.object({
+          inputSchema: z.object({
             owner: z.string(),
             repo: z.string(),
             base: z.string(),
             head: z.string(),
             token: z.string(),
-          })),
-          execute: async (args: { owner: string; repo: string; base: string; head: string; token: string }) => {
+          }),
+          execute: async (args) => {
             return await fetchDiff(args.owner, args.repo, args.base, args.head, args.token);
           },
         }),
@@ -127,9 +130,9 @@ Process:
     const changedFiles = diffResult?.files?.map((f: any) => f.filename) || [];
 
     const packageJsonResult = await sandbox.readFile("package.json");
-    const srcEntries: any = await sandbox.listDirectory("src").catch(() => ({ entries: [] }));
-    const testEntries: any = await sandbox.listDirectory("tests").catch(() => ({ entries: [] }));
-    const testSrcEntries: any = await sandbox.listDirectory("__tests__").catch(() => ({ entries: [] }));
+    const srcEntries = await sandbox.listDirectory("src").catch(() => [] as Array<{ name: string }>);
+    const testEntries = await sandbox.listDirectory("tests").catch(() => [] as Array<{ name: string }>);
+    const testSrcEntries = await sandbox.listDirectory("__tests__").catch(() => [] as Array<{ name: string }>);
 
     const changedFilesSummary = changedFiles.length > 0
       ? changedFiles.join("\n- ")
@@ -141,9 +144,9 @@ Changed files:
 - ${changedFilesSummary}
 
 Project structure:
-- src/: ${srcEntries.entries?.map((e: any) => e.name).join(", ") || "N/A"}
-- tests/: ${testEntries.entries?.map((e: any) => e.name).join(", ") || "N/A"}
-- __tests__/: ${testSrcEntries.entries?.map((e: any) => e.name).join(", ") || "N/A"}
+ - src/: ${srcEntries.map((e) => e.name).join(", ") || "N/A"}
+ - tests/: ${testEntries.map((e) => e.name).join(", ") || "N/A"}
+ - __tests__/: ${testSrcEntries.map((e) => e.name).join(", ") || "N/A"}
 
 Package.json:
 ${packageJsonResult}
@@ -153,17 +156,9 @@ Based on the above analysis, create a test plan identifying:
 2. What test strategy to use (unit, integration, e2e)
 3. What coverage areas are important`.trim();
 
-    const result = await agent.generate({
+    await agent.generate({
       prompt: testPlanContent,
     });
-
-    const output = result as unknown as {
-      text: string;
-      toolResults?: Array<{
-        toolName: string;
-        result?: any;
-      }>;
-    };
 
     const summary = `Analyzed ${changedFiles.length} changed files in ${input.owner}/${input.repo}. Identified test coverage needs for: ${changedFiles.slice(0, 5).join(", ")}${changedFiles.length > 5 ? "..." : ""}`;
 
