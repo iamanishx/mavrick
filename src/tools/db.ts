@@ -646,6 +646,89 @@ class RepoDB {
     throw new Error(`Session not found for id: ${sessionId}`);
   }
 
+  getRepos(): Repo[] {
+    const repos: Repo[] = [];
+    const files = fs.readdirSync(DB_DIR).filter(f => f.endsWith(".db"));
+    for (const file of files) {
+      const match = file.match(/^repo_(.+?)_(.+?)\.db$/) || file.match(/^(.+?)_(.+?)\.db$/);
+      if (match) {
+        let owner = match[1];
+        let repo = match[2];
+        try {
+          const config = this.getRepo(owner, repo);
+          if (config) repos.push(config);
+        } catch {}
+      }
+    }
+    return repos;
+  }
+
+  getRecentSessions(limit: number): AgentSession[] {
+    const sessions: AgentSession[] = [];
+    const repos = this.getRepos();
+    for (const r of repos) {
+      try {
+        const db = this.getDb(r.owner, r.repo);
+        const rows = db.query(`SELECT * FROM agent_sessions ORDER BY id DESC LIMIT ?`).all(limit) as any[];
+        for (const row of rows) {
+          sessions.push({
+            id: row.id,
+            repoId: row.repo_id,
+            discordThreadId: row.discord_thread_id,
+            status: row.status,
+            taskType: row.task_type,
+            taskInput: row.task_input,
+            result: row.result,
+            startedAt: row.started_at,
+            completedAt: row.completed_at,
+          });
+        }
+      } catch {}
+    }
+    return sessions.sort((a, b) => b.id - a.id).slice(0, limit);
+  }
+
+  getRunsBySession(sessionId: number): Run[] {
+    const db = this.getDbBySessionId(sessionId);
+    const rows = db.query(`
+      SELECT r.* FROM runs r
+      JOIN events e ON e.run_id = r.id
+      WHERE e.event_type IN ('discord.message.received', 'github.issue_comment', 'github.pull_request_review')
+        AND e.payload LIKE ?
+    `).all(`%"sessionId":${sessionId}%`) as any[];
+
+    return rows.map(row => ({
+      id: row.id,
+      repo_id: row.repo_id,
+      parent_run_id: row.parent_run_id,
+      root_run_id: row.root_run_id,
+      status: row.status,
+      source: row.source,
+      source_ref: row.source_ref,
+      task_input: row.task_input,
+      started_at: row.started_at,
+      completed_at: row.completed_at,
+      created_at: row.created_at,
+    }));
+  }
+
+  getEventsByRun(runId: string): any[] {
+    const db = this.getDbByRunId(runId);
+    const rows = db.query(`SELECT * FROM events WHERE run_id = ? ORDER BY ts_utc ASC`).all(runId) as any[];
+    return rows.map(row => ({
+      id: row.id,
+      runId: row.run_id,
+      rootRunId: row.root_run_id,
+      parentRunId: row.parent_run_id,
+      repoId: row.repo_id,
+      source: row.source,
+      sourceRef: row.source_ref,
+      eventType: row.event_type,
+      tsUtc: row.ts_utc,
+      payload: row.payload,
+    }));
+  }
+
   private getDbByRunId(runId: string): Database {
     const db = this.tryGetDbByRunId(runId);
     if (db) {

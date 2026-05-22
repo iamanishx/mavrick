@@ -10,6 +10,12 @@
       "source": "vercel/chat",
       "sourceType": "github",
       "computedHash": "c840ae901ffbba5fc35be84fcd07cee4cc3fe30d082498ca78568d2c05926da5"
+    },
+    "cline-sdk": {
+      "source": "cline/sdk-skill",
+      "sourceType": "github",
+      "skillPath": "skill/cline-sdk/SKILL.md",
+      "computedHash": "dd98b0cc325fa8674ba93f1aed2b75d232ca61e5a89394bf6efe6996392f3fc2"
     }
   }
 }

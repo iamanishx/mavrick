@@ -1,5 +1,13 @@
 import { createHmac, timingSafeEqual } from "crypto";
 import { repoDb } from "../tools/db";
+import { Queue } from "bullmq";
+
+const testQueue = new Queue("test-generation", {
+  connection: {
+    host: process.env.REDIS_HOST || "localhost",
+    port: parseInt(process.env.REDIS_PORT || "6379"),
+  },
+});
 
 function createId(prefix: string): string {
   const rand = Math.random().toString(36).slice(2, 10);
@@ -178,6 +186,67 @@ export async function handleGithubWebhook(req: Request): Promise<Response> {
           error: (error as Error).message,
         }),
       });
+    }
+  }
+
+  // PR auto follow-up loop trigger
+  const isPrComment = eventName === "issue_comment" && payload?.issue?.pull_request;
+  const isPrReview = eventName === "pull_request_review";
+  const commentBody = (payload?.comment?.body || payload?.review?.body || "").trim();
+
+  if ((isPrComment || isPrReview) && commentBody) {
+    const threadBinding = bindings.find((b) => b.platform === "discord");
+    const threadId = threadBinding?.thread_id || targetRun.source_ref;
+
+    const taskInput = `Follow-up PR Instruction: ${commentBody}`;
+    const taskType = "fix-bugs";
+
+    const session = repoDb.createSession(repoConfig.id, taskType, taskInput, threadId || "");
+    const run = repoDb.createRun({
+      id: createId("run"),
+      repoId: repoConfig.id,
+      parentRunId: targetRun.id,
+      rootRunId: targetRun.root_run_id,
+      status: "pending",
+      source: "github",
+      sourceRef: delivery,
+      taskInput,
+      startedAt: new Date().toISOString(),
+    });
+
+    if (threadId) {
+      repoDb.bindChannel({
+        id: createId("bind"),
+        runId: run.id,
+        platform: "discord",
+        channelId: threadId,
+        threadId,
+        externalRef: threadId,
+      });
+    }
+
+    await testQueue.add("process-task", {
+      owner,
+      repo,
+      taskInput,
+      taskType,
+      threadId,
+      installationId: repoConfig.installationId,
+      sessionId: session.id,
+      repoUrl: `https://github.com/${owner}/${repo}`,
+      rootRunId: run.root_run_id,
+      runId: run.id,
+    });
+
+    if (threadId) {
+      try {
+        await postToDiscord(
+          threadId,
+          `🔄 **Follow-up Triggered**: Detected new PR comment/review:\n> "${commentBody.slice(0, 150)}..."\nSpawning a follow-up Orchestrator loop (Session: ${session.id}, Run: ${run.id}) to resolve comments.`
+        );
+      } catch (err) {
+        console.warn("Failed to post follow-up notice to Discord:", err);
+      }
     }
   }
 

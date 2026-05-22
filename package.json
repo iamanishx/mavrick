@@ -8,6 +8,7 @@
     "worker": "bun run src/worker.ts",
     "dev": "bun run --watch src/http-server.ts",
     "dev:worker": "bun run --watch src/worker.ts",
+    "mcp": "bun run src/mcp-server.ts",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
@@ -20,6 +21,7 @@
     "@ai-sdk/openai": "^3.0.7",
     "@chat-adapter/discord": "^4.13.4",
     "@chat-adapter/state-memory": "^4.13.4",
+    "@cline/sdk": "^0.0.41",
     "@modelcontextprotocol/sdk": "^1.27.1",
     "ai": "^6.0.21",
     "bullmq": "^5.66.4",

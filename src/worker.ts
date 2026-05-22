@@ -1,7 +1,6 @@
 import { Worker, Job } from "bullmq";
-import { runSuperOrchestratorAgent } from "./agents/super-orchestrator.js";
+import { runAxeAgent } from "./agents/agent.js";
 import { repoDb } from "./tools/db.js";
-import type { TaskProgress } from "./tools/cat-client.js";
 
 function createId(prefix: string): string {
   const rand = Math.random().toString(36).slice(2, 10);
@@ -11,22 +10,10 @@ function createId(prefix: string): string {
 async function postProgressToDiscord(
   threadId: string,
   token: string,
-  progress: TaskProgress,
+  progress: string,
   existingMessageId?: string
 ): Promise<string | undefined> {
-  const done = progress.completedTodos.length;
-  const total = done + progress.pendingTodos.length + (progress.currentTodo ? 1 : 0);
-  const current = progress.currentTodo?.content ?? "...";
-
-  const lines = [
-    `**Working on your task** (${done}/${total} steps done)`,
-    `> ${current}`,
-  ];
-  if (progress.failedTodos.length > 0) {
-    lines.push(`${progress.failedTodos.length} step(s) had issues`);
-  }
-  const content = lines.join("\n");
-
+  const content = `⏳ **Status Update:** ${progress}`;
   const baseUrl = `https://discord.com/api/v10`;
   const headers = {
     Authorization: `Bot ${token}`,
@@ -34,24 +21,28 @@ async function postProgressToDiscord(
   };
 
   if (existingMessageId) {
-    await fetch(`${baseUrl}/channels/${threadId}/messages/${existingMessageId}`, {
-      method: "PATCH",
+    try {
+      await fetch(`${baseUrl}/channels/${threadId}/messages/${existingMessageId}`, {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify({ content }),
+      });
+      return existingMessageId;
+    } catch { }
+  }
+
+  try {
+    const res = await fetch(`${baseUrl}/channels/${threadId}/messages`, {
+      method: "POST",
       headers,
       body: JSON.stringify({ content }),
     });
-    return existingMessageId;
-  }
 
-  const res = await fetch(`${baseUrl}/channels/${threadId}/messages`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({ content }),
-  });
-
-  if (res.ok) {
-    const msg = await res.json() as { id: string };
-    return msg.id;
-  }
+    if (res.ok) {
+      const msg = await res.json() as { id: string };
+      return msg.id;
+    }
+  } catch { }
   return undefined;
 }
 
@@ -142,7 +133,7 @@ const worker = new Worker(
     }
 
     const repoConfig = repoDb.getOrCreateRepo(owner, repo, installationId);
-    
+
     const session = sessionId
       ? repoDb.getSession(sessionId)
       : repoDb.createSession(repoConfig.id, "test-generation", taskInput, threadId ?? undefined);
@@ -179,38 +170,34 @@ const worker = new Worker(
       tsUtc: now,
       payload: JSON.stringify({ owner, repo, branch: branch || repoConfig.defaultBranch }),
     });
-
     const discordToken = process.env.DISCORD_BOT_TOKEN;
     let progressMessageId: string | undefined;
 
     const onProgress = threadId && discordToken
-      ? async (progress: TaskProgress) => {
-          try {
-            progressMessageId = await postProgressToDiscord(
-              threadId, discordToken, progress, progressMessageId
-            );
-          } catch {}
-        }
+      ? async (status: string) => {
+        try {
+          progressMessageId = await postProgressToDiscord(
+            threadId, discordToken, status, progressMessageId
+          );
+        } catch { }
+      }
       : undefined;
-
-    const callOptions = {
-      repoUrl: repoUrl || `https://github.com/${owner}/${repo}`,
-      branch: branch || repoConfig.defaultBranch,
-      owner,
-      repo,
-      taskInput,
-      token,
-      base: base || repoConfig.defaultBranch,
-      head: branch || repoConfig.defaultBranch,
-      repoId: repoConfig.id,
-      rootRunId: run.root_run_id,
-      runId: run.id,
-      onProgress,
-    };
 
     let result;
     try {
-      result = await runSuperOrchestratorAgent(callOptions);
+      result = await runAxeAgent({
+        owner,
+        repo,
+        taskInput,
+        token,
+        sessionId: session.id,
+        runId: run.id,
+        branch,
+        base,
+        repoUrl,
+        onProgress,
+      });
+
       repoDb.updateSession(session.id, {
         status: result.success ? "completed" : "failed",
         result: JSON.stringify(result),
@@ -226,7 +213,7 @@ const worker = new Worker(
         source: "worker",
         sourceRef: `job:${job.id}`,
         tsUtc: new Date().toISOString(),
-        payload: JSON.stringify({ success: result.success, summary: result.summary }),
+        payload: JSON.stringify(result),
       });
     } catch (error) {
       repoDb.updateSession(session.id, {
