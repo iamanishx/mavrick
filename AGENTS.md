@@ -7,7 +7,7 @@
 
 ## VISION
 
-AxeAI is a multi-platform AI bot that listens on **Discord** (primary) and **Slack** (later) for natural-language requests, then autonomously generates integration tests and creates PRs on GitHub. It uses a **hierarchical agent architecture** built on top of the Vercel AI SDK's `ToolLoopAgent` and the Vercel Chat SDK for unified multi-platform messaging.
+Mavrick is a multi-platform AI bot that listens on **Discord** (primary) and **Slack** (later) for natural-language requests, then autonomously generates integration tests and creates PRs on GitHub. It uses a **hierarchical agent architecture** built on top of the Vercel AI SDK's `ToolLoopAgent` and the Vercel Chat SDK for unified multi-platform messaging.
 
 ### Why This Evolution?
 

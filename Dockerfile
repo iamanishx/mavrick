@@ -1,21 +1,17 @@
-FROM oven/bun:1.1-alpine AS base
+# Stage 1: Build
+FROM node:20-alpine AS builder
 WORKDIR /app
-
-# Install docker CLI so container can check docker daemon if needed
-RUN apk add --no-cache docker-cli
-
-# Copy package files
-COPY package.json bun.lock ./
-
-# Install production dependencies
-RUN bun install --frozen-lockfile --production
-
-# Copy source code
+COPY package*.json tsconfig.json ./
+RUN npm ci
 COPY src ./src
-COPY tsconfig.json ./
+RUN npm run build
 
-# Make data directory
-RUN mkdir -p /app/data
+# Stage 2: Production Run
+FROM node:20-alpine AS runner
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --only=production
+COPY --from=builder /app/dist ./dist
 
-# Run as non-root user (optional, but keep default for docker socket write access)
-EXPOSE 3000
+EXPOSE 3001
+CMD ["node", "dist/server.js"]

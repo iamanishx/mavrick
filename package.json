@@ -1,45 +1,32 @@
 {
-  "name": "axeai-test-bot",
+  "name": "mavrick-bot",
   "version": "1.0.0",
-  "description": "",
-  "main": "src/index.ts",
+  "description": "Production-ready autonomous issue fixer and PR reviewer using Cline SDK, BullMQ, and Kubernetes Pod sandboxing",
+  "type": "module",
+  "main": "dist/server.js",
   "scripts": {
-    "start": "bun run src/http-server.ts",
-    "worker": "bun run src/worker.ts",
-    "dev": "bun run --watch src/http-server.ts",
-    "dev:worker": "bun run --watch src/worker.ts",
-    "mcp": "bun run src/mcp-server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "worker": "node dist/worker.js",
+    "dev:server": "ts-node-esm src/server.ts",
+    "dev:worker": "ts-node-esm src/worker.ts",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "type": "commonjs",
   "dependencies": {
-    "@ai-sdk/anthropic": "^3.0.46",
-    "@ai-sdk/mcp": "^1.0.21",
-    "@ai-sdk/openai": "^3.0.7",
     "@chat-adapter/discord": "^4.13.4",
-    "@chat-adapter/state-memory": "^4.13.4",
     "@cline/sdk": "^0.0.41",
-    "@modelcontextprotocol/sdk": "^1.27.1",
-    "ai": "^6.0.21",
+    "@kubernetes/client-node": "^1.4.0",
     "bullmq": "^5.66.4",
     "chat": "^4.13.4",
-    "contained-sandbox": "file:../go-sandbox/npm",
     "dotenv": "^17.2.3",
-    "ioredis": "^5.9.1",
-    "tar-stream": "^3.1.7",
-    "zod": "^4.3.5"
+    "express": "^4.19.2",
+    "ioredis": "^5.9.1"
   },
   "devDependencies": {
-    "@types/bun": "latest",
-    "@types/dockerode": "^3.3.47",
-    "@types/node": "^25.0.3",
-    "@types/tar-stream": "^3.1.4",
-    "@types/tmp": "^0.2.6",
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.11.0",
     "ts-node": "^10.9.2",
-    "typescript": "^5.9.3"
+    "typescript": "^5.3.3"
   },
   "private": true
 }

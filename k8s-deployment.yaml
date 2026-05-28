@@ -1,0 +1,145 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mavrick
+---
+# 1. Redis Deployment for BullMQ
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mavrick-redis
+  namespace: mavrick
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mavrick-redis
+  template:
+    metadata:
+      labels:
+        app: mavrick-redis
+    spec:
+      containers:
+      - name: redis
+        image: redis:7-alpine
+        ports:
+        - containerPort: 6379
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mavrick-redis
+  namespace: mavrick
+spec:
+  ports:
+  - port: 6379
+  selector:
+    app: mavrick-redis
+---
+# 2. RBAC Permissions (Allows the Worker Pod to spin up/delete sandbox Pods)
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: mavrick-worker-sa
+  namespace: mavrick
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: mavrick-pod-manager
+  namespace: mavrick
+rules:
+- apiGroups: [""]
+  resources: ["pods", "pods/exec"]
+  verbs: ["create", "get", "list", "watch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: mavrick-worker-rbac
+  namespace: mavrick
+subjects:
+- kind: ServiceAccount
+  name: mavrick-worker-sa
+  namespace: mavrick
+roleRef:
+  kind: Role
+  name: mavrick-pod-manager
+  apiGroup: rbac.authorization.k8s.io
+---
+# 3. Stateless API Gateway Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mavrick-server
+  namespace: mavrick
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: mavrick-server
+  template:
+    metadata:
+      labels:
+        app: mavrick-server
+    spec:
+      containers:
+      - name: server
+        image: docker.io/library/mavrick-bot:latest # Replace 'library' with your Docker Hub username
+        command: ["node", "dist/server.js"]
+        ports:
+        - containerPort: 3001
+        env:
+        - name: REDIS_HOST
+          value: "mavrick-redis"
+        - name: REDIS_PORT
+          value: "6379"
+        - name: GOAL_PORT
+          value: "3001"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mavrick-server
+  namespace: mavrick
+spec:
+  type: NodePort
+  ports:
+  - port: 3001
+    nodePort: 30301
+  selector:
+    app: mavrick-server
+---
+# 4. BullMQ Queue Worker Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mavrick-worker
+  namespace: mavrick
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: mavrick-worker
+  template:
+    metadata:
+      labels:
+        app: mavrick-worker
+    spec:
+      serviceAccountName: mavrick-worker-sa
+      containers:
+      - name: worker
+        image: docker.io/library/mavrick-bot:latest # Replace 'library' with your Docker Hub username
+        command: ["node", "dist/worker.js"]
+        env:
+        - name: REDIS_HOST
+          value: "mavrick-redis"
+        - name: REDIS_PORT
+          value: "6379"
+        - name: DEEPSEEK_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: mavrick-secrets
+              key: deepseek-key
+        - name: DEEPSEEK_MODEL_ID
+          value: "deepseek-v4-flash"

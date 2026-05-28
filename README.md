@@ -1,9 +1,9 @@
-# AxeAI Test Bot
+# Mavrick Test Bot
 
 A GitHub App bot that automatically generates integration tests for Pull Requests using Vercel AI SDK.
 
 ## Features
-- Listens for comments on PRs mentioning `@axeai-bot`.
+- Listens for comments on PRs mentioning `@mavrick-bot`.
 - Analyzes changed files in the PR.
 - Generates integration tests (Jest/Vitest) using OpenAI (GPT-4o).
 - Creates a new branch and opens a PR with the generated tests targeting the original PR.
@@ -36,5 +36,5 @@ A GitHub App bot that automatically generates integration tests for Pull Request
 
 1.  Install the app on your repository.
 2.  Open a Pull Request.
-3.  Comment `@axeai-bot` on the PR.
+3.  Comment `@mavrick-bot` on the PR.
 4.  The bot will reply, generate tests, and link the new PR containing the tests.
